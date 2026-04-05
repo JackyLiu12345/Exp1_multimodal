@@ -259,11 +259,14 @@ class GatingNetwork(nn.Module):
         expert_usage = expert_weights.mean(dim=[0, 1])  # [num_experts]
         self.expert_usage = expert_usage.detach()
         
-        # 鼓励均匀分布
+        # 鼓励均匀分布: KL(expert_usage || uniform)
         uniform_usage = torch.ones_like(expert_usage) / self.num_experts
+        # F.kl_div expects input=log-probs, target=probs → KL(target || input)
+        # We want KL(expert_usage || uniform), so input=uniform.log(), target=expert_usage
+        # But expert_usage from softmax already sums to 1 over experts
         self.aux_loss = F.kl_div(
-            uniform_usage.log(),
-            expert_usage,
+            expert_usage.clamp(min=1e-8).log(),
+            uniform_usage,
             reduction="batchmean",
         )
 

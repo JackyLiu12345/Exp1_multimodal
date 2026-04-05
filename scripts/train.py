@@ -163,8 +163,9 @@ class Trainer:
         num_epochs = self.config.get("training", {}).get("num_epochs", 10)
         accumulation_steps = self.config.get("training", {}).get("gradient_accumulation_steps", 1)
         warmup_ratio = sched_config.get("warmup_ratio", 0.1)
-        # Scheduler steps = optimizer steps (batches / accumulation_steps)
-        steps_per_epoch = len(self.train_loader) // accumulation_steps
+        # Scheduler steps = optimizer steps (ceil to account for partial final accumulation)
+        import math
+        steps_per_epoch = math.ceil(len(self.train_loader) / accumulation_steps)
         total_steps = num_epochs * steps_per_epoch
         warmup_steps = int(total_steps * warmup_ratio)
         
@@ -243,6 +244,7 @@ class Trainer:
                     self.scaler.step(self.optimizer)
                     self.scaler.update()
                     self.optimizer.zero_grad()
+                    self.global_step += 1
                     if self.scheduler:
                         self.scheduler.step()
             else:
@@ -260,13 +262,13 @@ class Trainer:
                     torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_grad_norm)
                     self.optimizer.step()
                     self.optimizer.zero_grad()
+                    self.global_step += 1
                     if self.scheduler:
                         self.scheduler.step()
             
             # 统计 (report un-scaled loss)
             total_loss += loss.item() * accumulation_steps
             num_batches += 1
-            self.global_step += 1
             
             # 更新进度条
             pbar.set_postfix({"loss": f"{loss.item() * accumulation_steps:.4f}"})

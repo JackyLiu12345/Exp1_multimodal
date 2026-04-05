@@ -439,7 +439,8 @@ class MultimodalFakeNewsClassifier(nn.Module):
         labels_same.masked_fill_(self_mask, 0.0)
         
         # InfoNCE: log_softmax over each row, weight by positive pairs
-        log_prob = similarity - torch.logsumexp(similarity.masked_fill(self_mask, float('-inf')), dim=-1, keepdim=True)
+        # Use -1e9 instead of -inf to avoid NaN from logsumexp
+        log_prob = similarity - torch.logsumexp(similarity.masked_fill(self_mask, -1e9), dim=-1, keepdim=True)
         
         # Average over positive pairs per row
         num_positives = labels_same.sum(dim=-1)
