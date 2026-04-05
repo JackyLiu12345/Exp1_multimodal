@@ -527,6 +527,7 @@ def main():
     print(f"\n创建模型...")
     
     model_config = config.get("model", {})
+    training_config = config.get("training", {})
     model = MultimodalFakeNewsClassifier(
         text_model_name=model_config.get("text_encoder", {}).get("name", "FacebookAI/roberta-base"),
         vision_model_name=model_config.get("vision_encoder", {}).get("name", "google/vit-base-patch16-224"),
@@ -535,6 +536,8 @@ def main():
         moe_lora_r=model_config.get("moe_lora", {}).get("lora_r", 8),
         moe_lora_alpha=model_config.get("moe_lora", {}).get("lora_alpha", 16.0),
         freeze_encoders=False,
+        label_smoothing=training_config.get("label_smoothing", 0.0),
+        gradient_checkpointing=training_config.get("gradient_checkpointing", False),
     )
     
     # 参数量统计

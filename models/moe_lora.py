@@ -18,7 +18,10 @@ MoE-LoRA 核心模块
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+import logging
 from typing import Dict, List, Optional, Tuple
+
+logger = logging.getLogger(__name__)
 
 
 class LoRALayer(nn.Module):
@@ -391,7 +394,17 @@ class MoELoRA(nn.Module):
     
     def get_expert_usage(self) -> torch.Tensor:
         """获取专家使用率统计"""
-        return self.gate.expert_usage if hasattr(self.gate, 'expert_usage') else None
+        usage = self.gate.expert_usage if hasattr(self.gate, 'expert_usage') else None
+        if usage is not None:
+            # Log warning if expert usage is highly imbalanced
+            max_usage = usage.max().item()
+            min_usage = usage.min().item()
+            if max_usage > 0 and min_usage / max_usage < 0.1:
+                logger.warning(
+                    f"Expert load imbalance detected: "
+                    f"usage={[f'{u:.3f}' for u in usage.tolist()]}"
+                )
+        return usage
 
 
 class CrossModalFusion(nn.Module):

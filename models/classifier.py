@@ -231,10 +231,15 @@ class MultimodalFakeNewsClassifier(nn.Module):
         dropout: float = 0.1,
         # 冻结编码器
         freeze_encoders: bool = False,
+        # Label smoothing
+        label_smoothing: float = 0.0,
+        # Gradient checkpointing
+        gradient_checkpointing: bool = False,
     ):
         super().__init__()
         
         self.num_labels = num_labels
+        self.label_smoothing = label_smoothing
         
         # 文本编码器
         self.text_encoder = TextEncoder(
@@ -249,6 +254,13 @@ class MultimodalFakeNewsClassifier(nn.Module):
             freeze=freeze_encoders,
             dropout=dropout,
         )
+        
+        # Enable gradient checkpointing on encoder backbones
+        if gradient_checkpointing:
+            if hasattr(self.text_encoder.roberta, 'gradient_checkpointing_enable'):
+                self.text_encoder.roberta.gradient_checkpointing_enable()
+            if hasattr(self.vision_encoder.vit, 'gradient_checkpointing_enable'):
+                self.vision_encoder.vit.gradient_checkpointing_enable()
         
         # 跨模态融合 (使用 MoE-LoRA)
         self.cross_modal_fusion = CrossModalFusion(
@@ -364,8 +376,10 @@ class MultimodalFakeNewsClassifier(nn.Module):
         # 8. 计算损失
         loss_dict = {}
         if return_loss and labels is not None:
-            # 主分类损失 (交叉熵)
-            classification_loss = F.cross_entropy(logits, labels)
+            # 主分类损失 (交叉熵 with optional label smoothing)
+            classification_loss = F.cross_entropy(
+                logits, labels, label_smoothing=self.label_smoothing
+            )
             
             # 对比损失
             contrastive_loss = self._compute_contrastive_loss(

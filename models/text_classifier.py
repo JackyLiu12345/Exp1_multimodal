@@ -45,11 +45,16 @@ class TextOnlyFakeNewsClassifier(nn.Module):
         dropout: float = 0.1,
         # 冻结编码器
         freeze_encoder: bool = False,
+        # Label smoothing
+        label_smoothing: float = 0.0,
+        # Gradient checkpointing
+        gradient_checkpointing: bool = False,
     ):
         super().__init__()
         
         self.num_labels = num_labels
         self.hidden_dim = hidden_dim
+        self.label_smoothing = label_smoothing
         
         # 文本编码器
         self.text_encoder = AutoModel.from_pretrained(model_name)
@@ -58,6 +63,10 @@ class TextOnlyFakeNewsClassifier(nn.Module):
         if freeze_encoder:
             for param in self.text_encoder.parameters():
                 param.requires_grad = False
+        
+        # Enable gradient checkpointing
+        if gradient_checkpointing and hasattr(self.text_encoder, 'gradient_checkpointing_enable'):
+            self.text_encoder.gradient_checkpointing_enable()
         
         encoder_hidden = self.text_encoder.config.hidden_size
         
@@ -154,7 +163,9 @@ class TextOnlyFakeNewsClassifier(nn.Module):
         loss_dict = {}
         if return_loss and labels is not None:
             # 主分类损失
-            classification_loss = F.cross_entropy(logits, labels)
+            classification_loss = F.cross_entropy(
+                logits, labels, label_smoothing=self.label_smoothing
+            )
             
             # 不确定性损失
             uncertainty_loss = self._compute_uncertainty_loss(evidence, labels)
