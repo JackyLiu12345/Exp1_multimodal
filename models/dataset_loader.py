@@ -17,12 +17,18 @@
 
 import os
 import json
+import logging
 import torch
 from torch.utils.data import Dataset, DataLoader, WeightedRandomSampler
 from typing import Dict, List, Optional, Tuple, Callable
 from PIL import Image
 import torchvision.transforms as transforms
 from pathlib import Path
+
+logger = logging.getLogger(__name__)
+
+# Consistent label mapping used across all splits
+DEFAULT_LABEL2ID = {"real": 0, "fake": 1}
 
 
 class MultimodalDataset(Dataset):
@@ -35,6 +41,7 @@ class MultimodalDataset(Dataset):
         max_text_length: int = 512,
         image_transform: Optional[Callable] = None,
         augment: bool = False,
+        label2id: Optional[Dict[str, int]] = None,
     ):
         """
         初始化数据集
@@ -45,6 +52,7 @@ class MultimodalDataset(Dataset):
             max_text_length: 最大文本长度
             image_transform: 图像变换
             augment: 是否使用数据增强
+            label2id: Explicit label mapping; defaults to {"real": 0, "fake": 1}
         """
         self.data_path = Path(data_path)
         self.max_text_length = max_text_length
@@ -81,19 +89,56 @@ class MultimodalDataset(Dataset):
         else:
             self.image_transform = image_transform
         
-        # 标签映射
-        self.label2id = {"real": 0, "fake": 1}
+        # Use explicit label mapping for consistency across splits
+        if label2id is not None:
+            self.label2id = label2id
+        else:
+            self.label2id = dict(DEFAULT_LABEL2ID)
         self.id2label = {v: k for k, v in self.label2id.items()}
         
-        # 自动检测标签类型
-        if len(self.samples) > 0:
-            first_label = self.samples[0].get("label", "")
-            if first_label not in self.label2id:
-                # 重新构建标签映射
-                unique_labels = sorted(set(s.get("label", "") for s in self.samples))
-                self.label2id = {label: i for i, label in enumerate(unique_labels)}
-                self.id2label = {i: label for label, i in self.label2id.items()}
-                print(f"  检测到标签：{unique_labels}")
+        # Validate data and log warnings
+        self._validate_data()
+    
+    def _validate_data(self):
+        """Validate loaded data and log warnings for potential issues."""
+        empty_text_count = 0
+        missing_image_count = 0
+        unknown_label_count = 0
+        
+        for i, sample in enumerate(self.samples):
+            # Check for empty text
+            text = sample.get("text", "")
+            if not text or not text.strip():
+                empty_text_count += 1
+            
+            # Check for missing images
+            has_image = sample.get("has_image", False)
+            image_path = sample.get("image_path")
+            if has_image and image_path and not Path(image_path).exists():
+                missing_image_count += 1
+            
+            # Check for unknown labels
+            label = sample.get("label", "")
+            if label not in self.label2id:
+                unknown_label_count += 1
+        
+        if empty_text_count > 0:
+            logger.warning(
+                f"⚠️  {empty_text_count}/{len(self.samples)} samples have empty text"
+            )
+        if missing_image_count > 0:
+            logger.warning(
+                f"⚠️  {missing_image_count}/{len(self.samples)} samples have missing image files"
+            )
+        if unknown_label_count > 0:
+            logger.warning(
+                f"⚠️  {unknown_label_count}/{len(self.samples)} samples have unknown labels "
+                f"(expected: {list(self.label2id.keys())})"
+            )
+        
+        # Log label distribution
+        dist = self.get_label_distribution()
+        print(f"  标签分布：{dist}")
     
     def __len__(self) -> int:
         return len(self.samples)
@@ -127,6 +172,7 @@ class MultimodalDataset(Dataset):
                 image_tensor = self.image_transform(image)
             except Exception as e:
                 # 图像加载失败，使用零图像
+                logger.warning(f"Failed to load image {image_path}: {e}")
                 image_tensor = torch.zeros(3, 224, 224)
                 has_image = False
         else:

@@ -17,13 +17,17 @@
 - [x] 数据预处理脚本 (`scripts/preprocess.py`)
 - [x] 数据集加载器 (`models/dataset_loader.py`)
 - [x] MoE-LoRA 核心模块 (`models/moe_lora.py`)
+- [x] 跨模态融合模块 (`models/moe_lora.py`)
+- [x] 多模态分类器 (`models/classifier.py`)
+- [x] 纯文本分类器 (`models/text_classifier.py`)
+- [x] 训练脚本 (`scripts/train.py`)
 - [x] 实验配置文件 (`experiments/config.yaml`)
+- [x] 单元测试和集成测试 (`tests/`)
+- [x] 数据格式文档 (`data/README.md`)
 
 ### 🔄 进行中
 
 - [ ] 数据下载 (需手动)
-- [ ] 模型主架构实现
-- [ ] 训练脚本
 
 ### ⏳ 待开始
 
@@ -39,7 +43,7 @@
 ### Step 1: 安装依赖
 
 ```bash
-cd /home/admin/openclaw/workspace/Exp1_multimodal
+cd Exp1_multimodal
 pip install -r requirements.txt
 ```
 
@@ -83,11 +87,14 @@ python models/dataset_loader.py
   标签：1 (fake)
 ```
 
-### Step 4: 开始训练 (待实现)
+### Step 4: 开始训练
 
 ```bash
-# 完整训练
+# 完整多模态训练
 python scripts/train.py --config experiments/config.yaml
+
+# FakeNewsNet 纯文本快速训练
+python scripts/train_fakenewsnet_quick.py
 
 # 消融实验
 python scripts/train.py --config experiments/config.yaml --ablation no_moe
@@ -127,8 +134,11 @@ python scripts/train.py --config experiments/config.yaml --ablation no_moe
 |------|----------|------|
 | MoE-LoRA | `models/moe_lora.py` | ✅ 完成 |
 | 跨模态融合 | `models/moe_lora.py` | ✅ 完成 |
+| 多模态分类器 | `models/classifier.py` | ✅ 完成 |
+| 纯文本分类器 | `models/text_classifier.py` | ✅ 完成 |
 | 数据加载 | `models/dataset_loader.py` | ✅ 完成 |
-| 训练循环 | `scripts/train.py` | ⏳ 待实现 |
+| 训练循环 | `scripts/train.py` | ✅ 完成 |
+| 单元测试 | `tests/` | ✅ 完成 |
 | 评估 | `scripts/evaluate.py` | ⏳ 待实现 |
 
 ---
@@ -209,11 +219,18 @@ training:
 | 文件 | 用途 |
 |------|------|
 | `README.md` | 项目总览 |
-| `experiments/config.yaml` | 实验配置 |
+| `experiments/config.yaml` | 多模态实验配置 |
+| `experiments/config_fakenewsnet_text.yaml` | 纯文本实验配置 |
 | `scripts/collect_data.py` | 数据收集 |
 | `scripts/preprocess.py` | 数据预处理 |
+| `scripts/train.py` | 多模态训练脚本 |
+| `scripts/train_fakenewsnet_quick.py` | 快速文本训练脚本 |
 | `models/dataset_loader.py` | 数据加载 |
-| `models/moe_lora.py` | MoE-LoRA 核心 |
+| `models/moe_lora.py` | MoE-LoRA 核心 + 跨模态融合 |
+| `models/classifier.py` | 多模态分类器 |
+| `models/text_classifier.py` | 纯文本分类器 |
+| `tests/` | 单元测试和集成测试 |
+| `data/README.md` | 数据格式文档 |
 | `literature/survey.md` | 文献综述 |
 
 ---
@@ -232,5 +249,4 @@ training:
 ---
 
 **最后更新**: 2026-04-05  
-**负责人**: Zywoo + User  
-**联系方式**: 通过 OpenClaw 会话
+**负责人**: JackyLiu12345

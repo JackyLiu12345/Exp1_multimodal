@@ -16,6 +16,7 @@
 import os
 import sys
 import json
+import math
 import argparse
 import time
 from pathlib import Path
@@ -35,6 +36,8 @@ from transformers import AutoTokenizer
 from models.classifier import MultimodalFakeNewsClassifier
 from models.dataset_loader import create_train_val_test_loaders
 from models.moe_lora import MoELoRA
+
+from tqdm import tqdm
 
 try:
     import wandb
@@ -97,7 +100,7 @@ class Trainer:
         # WandB
         if WANDB_AVAILABLE and config.get("logging", {}).get("wandb", {}).get("enabled", True):
             wandb_config = config.get("logging", {}).get("wandb", {})
-            wandb.init(
+            self.wandb_run = wandb.init(
                 project=wandb_config.get("project", "multimodal-fake-news"),
                 entity=wandb_config.get("entity", ""),
                 config=config,
@@ -159,9 +162,12 @@ class Trainer:
         sched_config = self.config.get("training", {}).get("scheduler", {})
         
         num_epochs = self.config.get("training", {}).get("num_epochs", 10)
+        accumulation_steps = self.config.get("training", {}).get("gradient_accumulation_steps", 1)
         warmup_ratio = sched_config.get("warmup_ratio", 0.1)
-        warmup_steps = int(num_epochs * len(self.train_loader) * warmup_ratio)
-        total_steps = num_epochs * len(self.train_loader)
+        # Scheduler steps = optimizer steps (ceil to account for partial final accumulation)
+        steps_per_epoch = math.ceil(len(self.train_loader) / accumulation_steps)
+        total_steps = num_epochs * steps_per_epoch
+        warmup_steps = int(total_steps * warmup_ratio)
         
         sched_name = sched_config.get("name", "cosine")
         
@@ -197,24 +203,25 @@ class Trainer:
         total_loss = 0.0
         num_batches = 0
         
-        # 进度条
-        from tqdm import tqdm
+        # Gradient accumulation and clipping config
+        accumulation_steps = self.config.get("training", {}).get("gradient_accumulation_steps", 1)
+        max_grad_norm = self.config.get("training", {}).get("max_grad_norm", 1.0)
         
+        # 进度条
         pbar = tqdm(
             self.train_loader,
             desc=f"Epoch {self.epoch + 1}/{self.config['training']['num_epochs']} (Train)",
             leave=False,
         )
         
-        for batch in pbar:
+        self.optimizer.zero_grad()
+        
+        for batch_idx, batch in enumerate(pbar):
             # 准备数据
             input_ids = batch["text_input_ids"].to(self.device)
             attention_mask = batch["attention_mask"].to(self.device)
             pixel_values = batch["image"].to(self.device)
             labels = batch["label"].to(self.device)
-            
-            # 清空梯度
-            self.optimizer.zero_grad()
             
             # 前向传播 + 混合精度
             if self.use_fp16 and self.scaler:
@@ -226,12 +233,20 @@ class Trainer:
                         labels=labels,
                         return_loss=True,
                     )
-                    loss = outputs["loss"]
+                    loss = outputs["loss"] / accumulation_steps
                 
                 # 反向传播
                 self.scaler.scale(loss).backward()
-                self.scaler.step(self.optimizer)
-                self.scaler.update()
+                
+                if (batch_idx + 1) % accumulation_steps == 0:
+                    self.scaler.unscale_(self.optimizer)
+                    torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_grad_norm)
+                    self.scaler.step(self.optimizer)
+                    self.scaler.update()
+                    self.optimizer.zero_grad()
+                    self.global_step += 1
+                    if self.scheduler:
+                        self.scheduler.step()
             else:
                 outputs = self.model(
                     input_ids=input_ids,
@@ -240,25 +255,27 @@ class Trainer:
                     labels=labels,
                     return_loss=True,
                 )
-                loss = outputs["loss"]
+                loss = outputs["loss"] / accumulation_steps
                 loss.backward()
-                self.optimizer.step()
+                
+                if (batch_idx + 1) % accumulation_steps == 0:
+                    torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_grad_norm)
+                    self.optimizer.step()
+                    self.optimizer.zero_grad()
+                    self.global_step += 1
+                    if self.scheduler:
+                        self.scheduler.step()
             
-            # 学习率调度
-            if self.scheduler:
-                self.scheduler.step()
-            
-            # 统计
-            total_loss += loss.item()
+            # 统计 (report un-scaled loss)
+            total_loss += loss.item() * accumulation_steps
             num_batches += 1
-            self.global_step += 1
             
             # 更新进度条
-            pbar.set_postfix({"loss": f"{loss.item():.4f}"})
+            pbar.set_postfix({"loss": f"{loss.item() * accumulation_steps:.4f}"})
             
             # TensorBoard 日志
             if self.writer and self.global_step % 10 == 0:
-                self.writer.add_scalar("train/loss", loss.item(), self.global_step)
+                self.writer.add_scalar("train/loss", loss.item() * accumulation_steps, self.global_step)
                 self.writer.add_scalar("train/lr", self.optimizer.param_groups[0]["lr"], self.global_step)
         
         avg_loss = total_loss / num_batches
@@ -510,6 +527,7 @@ def main():
     print(f"\n创建模型...")
     
     model_config = config.get("model", {})
+    training_config = config.get("training", {})
     model = MultimodalFakeNewsClassifier(
         text_model_name=model_config.get("text_encoder", {}).get("name", "FacebookAI/roberta-base"),
         vision_model_name=model_config.get("vision_encoder", {}).get("name", "google/vit-base-patch16-224"),
@@ -518,6 +536,8 @@ def main():
         moe_lora_r=model_config.get("moe_lora", {}).get("lora_r", 8),
         moe_lora_alpha=model_config.get("moe_lora", {}).get("lora_alpha", 16.0),
         freeze_encoders=False,
+        label_smoothing=training_config.get("label_smoothing", 0.0),
+        gradient_checkpointing=training_config.get("gradient_checkpointing", False),
     )
     
     # 参数量统计

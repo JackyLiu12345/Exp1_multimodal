@@ -23,8 +23,9 @@ from models.text_classifier import TextOnlyFakeNewsClassifier
 from models.dataset_loader import MultimodalDataset, create_dataloader
 
 # 配置
-DATA_DIR = "data/raw/fakenewsnet"
-OUTPUT_DIR = "results/fakenewsnet_quick"
+PROJECT_ROOT = Path(__file__).parent.parent
+DATA_DIR = str(PROJECT_ROOT / "data" / "raw" / "fakenewsnet")
+OUTPUT_DIR = str(PROJECT_ROOT / "results" / "fakenewsnet_quick")
 BATCH_SIZE = 16
 NUM_EPOCHS = 3
 LEARNING_RATE = 2e-5
