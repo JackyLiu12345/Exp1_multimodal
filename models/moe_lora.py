@@ -257,12 +257,13 @@ class GatingNetwork(nn.Module):
         """
         # 专家使用率
         expert_usage = expert_weights.mean(dim=[0, 1])  # [num_experts]
+        self.expert_usage = expert_usage.detach()
         
         # 鼓励均匀分布
         uniform_usage = torch.ones_like(expert_usage) / self.num_experts
         self.aux_loss = F.kl_div(
-            F.log_softmax(expert_usage, dim=-1),
-            uniform_usage,
+            uniform_usage.log(),
+            expert_usage,
             reduction="batchmean",
         )
 
@@ -350,21 +351,29 @@ class MoELoRA(nn.Module):
         output = torch.zeros_like(hidden_states)
         
         # 对每个专家进行处理
-        for expert_id, expert in enumerate(self.experts):
-            # 找到分配给当前专家的 token
-            mask = (expert_indices == expert_id)
-            if not mask.any():
-                continue
-            
-            # 提取对应 token
-            masked_input = hidden_states * mask.unsqueeze(-1)
-            
-            # 专家处理
-            expert_output = expert(masked_input, base_weights)
-            
-            # 加权累加
-            weight = expert_weights[:, :, expert_id:expert_id+1]
-            output = output + expert_output * weight
+        if self.gate.routing_method == "softmax":
+            # Soft routing: all experts weighted, no masking needed
+            for expert_id, expert in enumerate(self.experts):
+                expert_output = expert(hidden_states, base_weights)
+                weight = expert_weights[:, :, expert_id:expert_id+1]
+                output = output + expert_output * weight
+        else:
+            # Top-K routing: only process tokens assigned to each expert
+            for expert_id, expert in enumerate(self.experts):
+                # Find tokens assigned to this expert across all top-k slots
+                mask = (expert_indices == expert_id).any(dim=-1)  # [batch, seq_len]
+                if not mask.any():
+                    continue
+                
+                # Process full batch through expert (unavoidable without scatter)
+                expert_output = expert(hidden_states, base_weights)
+                
+                # Get the weight for this expert from the top-k weights
+                # expert_indices: [batch, seq, top_k], expert_weights: [batch, seq, top_k]
+                expert_mask = (expert_indices == expert_id).float()  # [batch, seq, top_k]
+                weight = (expert_weights * expert_mask).sum(dim=-1, keepdim=True)  # [batch, seq, 1]
+                
+                output = output + expert_output * weight
         
         # 输出投影
         output = self.output_proj(output)
@@ -450,18 +459,24 @@ class CrossModalFusion(nn.Module):
         
         # 构建注意力掩码
         if attention_mask is not None:
+            # TransformerEncoder expects bool padding mask (True = ignore)
+            if attention_mask.dtype != torch.bool:
+                attention_mask = attention_mask.bool()
+            
             # 文本部分的掩码
             text_mask_len = text_proj.shape[1]
             vision_mask_len = vision_proj.shape[1]
             
-            # 扩展掩码 (文本部分使用原掩码，视觉部分全为 1)
+            # 扩展掩码 (文本部分使用原掩码，视觉部分全为 True — not padded)
             vision_mask = torch.ones(
                 attention_mask.shape[0],
                 vision_mask_len,
                 device=attention_mask.device,
-                dtype=attention_mask.dtype,
+                dtype=torch.bool,
             )
             combined_mask = torch.cat([attention_mask, vision_mask], dim=1)
+            # Invert: PyTorch src_key_padding_mask uses True to indicate positions to ignore
+            combined_mask = ~combined_mask
         else:
             combined_mask = None
         

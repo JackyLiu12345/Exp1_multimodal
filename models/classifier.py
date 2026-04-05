@@ -412,10 +412,18 @@ class MultimodalFakeNewsClassifier(nn.Module):
         temperature: float = 0.07,
     ) -> torch.Tensor:
         """
-        跨模态对比损失
+        跨模态对比损失 (Supervised InfoNCE)
         
         同类样本的图文特征应该相似，异类样本应该相异
         """
+        batch_size = text_features.shape[0]
+        if batch_size < 2:
+            return torch.tensor(0.0, device=text_features.device)
+        
+        # Ensure both are [batch, hidden] — pool vision if needed
+        if vision_features.dim() == 3:
+            vision_features = vision_features.mean(dim=1)
+        
         # 归一化特征
         text_norm = F.normalize(text_features, dim=-1)
         vision_norm = F.normalize(vision_features, dim=-1)
@@ -426,14 +434,23 @@ class MultimodalFakeNewsClassifier(nn.Module):
         # 正样本对 (相同标签)
         labels_same = (labels.unsqueeze(0) == labels.unsqueeze(1)).float()  # [batch, batch]
         
-        # InfoNCE 损失
-        exp_sim = torch.exp(similarity)
-        log_prob = similarity - torch.log(exp_sim.sum(dim=-1, keepdim=True) + 1e-8)
+        # Mask out self-similarity on diagonal
+        self_mask = torch.eye(batch_size, device=similarity.device, dtype=torch.bool)
+        labels_same.masked_fill_(self_mask, 0.0)
         
-        # 只考虑正样本
-        contrastive_loss = -(log_prob * labels_same).sum(dim=-1) / (labels_same.sum(dim=-1) + 1e-8)
+        # InfoNCE: log_softmax over each row, weight by positive pairs
+        log_prob = similarity - torch.logsumexp(similarity.masked_fill(self_mask, float('-inf')), dim=-1, keepdim=True)
         
-        return contrastive_loss.mean()
+        # Average over positive pairs per row
+        num_positives = labels_same.sum(dim=-1)
+        # Avoid division by zero for rows with no positive pairs
+        valid_rows = num_positives > 0
+        if not valid_rows.any():
+            return torch.tensor(0.0, device=text_features.device)
+        
+        contrastive_loss = -(log_prob * labels_same).sum(dim=-1) / num_positives.clamp(min=1)
+        
+        return contrastive_loss[valid_rows].mean()
     
     def _compute_uncertainty_loss(
         self,
@@ -441,27 +458,26 @@ class MultimodalFakeNewsClassifier(nn.Module):
         labels: torch.Tensor,
     ) -> torch.Tensor:
         """
-        不确定性损失
-        
-        鼓励模型对正确类别给出高证据，对错误类别给出低证据
+        Evidential Deep Learning loss
+
+        Uses the Dirichlet-based negative log likelihood plus a
+        regularizer that minimizes wrong-class evidence.
         """
-        batch_size = evidence.shape[0]
-        
         # 创建 one-hot 标签
         one_hot = F.one_hot(labels, self.num_labels).float()  # [batch, num_labels]
         
         # Dirichlet 分布参数
-        alpha = evidence + 1
+        alpha = evidence + 1  # [batch, num_labels]
+        S = alpha.sum(dim=-1, keepdim=True)  # Dirichlet strength [batch, 1]
         
-        # 负对数似然
-        log_alpha = torch.lgamma(alpha.sum(dim=-1, keepdim=True))
-        log_alpha_i = torch.lgamma(alpha)
+        # Type-II maximum likelihood loss (expected cross-entropy under Dirichlet)
+        nll_loss = (one_hot * (torch.digamma(S) - torch.digamma(alpha))).sum(dim=-1).mean()
         
-        # 简化版本：直接最小化错误类别的证据
+        # Regularization: penalize evidence assigned to wrong classes
         wrong_evidence = evidence * (1 - one_hot)
-        wrong_evidence_loss = wrong_evidence.sum(dim=-1).mean()
+        reg_loss = wrong_evidence.sum(dim=-1).mean()
         
-        return wrong_evidence_loss
+        return nll_loss + 0.1 * reg_loss
     
     def predict(
         self,

@@ -186,11 +186,19 @@ class TextOnlyFakeNewsClassifier(nn.Module):
         evidence: torch.Tensor,
         labels: torch.Tensor,
     ) -> torch.Tensor:
-        """不确定性损失"""
-        batch_size = evidence.shape[0]
+        """Evidential Deep Learning loss"""
         one_hot = F.one_hot(labels, self.num_labels).float()
+        alpha = evidence + 1
+        S = alpha.sum(dim=-1, keepdim=True)
+        
+        # Type-II maximum likelihood loss
+        nll_loss = (one_hot * (torch.digamma(S) - torch.digamma(alpha))).sum(dim=-1).mean()
+        
+        # Regularization: penalize wrong-class evidence
         wrong_evidence = evidence * (1 - one_hot)
-        return wrong_evidence.sum(dim=-1).mean()
+        reg_loss = wrong_evidence.sum(dim=-1).mean()
+        
+        return nll_loss + 0.1 * reg_loss
     
     def predict(
         self,
