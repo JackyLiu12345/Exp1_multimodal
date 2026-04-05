@@ -1,0 +1,126 @@
+# FakeNewsNet CSV 文本分类配置
+
+# ==================== 数据集配置 ====================
+dataset:
+  name: fakenewsnet_csv
+  data_dir: data/processed/fakenewsnet
+  max_text_length: 512
+
+# ==================== 模型配置 ====================
+model:
+  # 文本编码器
+  text_encoder:
+    name: FacebookAI/roberta-base
+    freeze: false
+    dropout: 0.1
+  
+  # 视觉编码器 (禁用)
+  vision_encoder: null
+  
+  # 使用纯文本分类器
+  classifier_type: text_only
+  
+  # 文本分类器配置
+  text_classifier:
+    hidden_dim: 768
+    num_labels: 2
+    dropout: 0.3
+  
+  # MoE-LoRA 配置 (用于文本)
+  moe_lora:
+    num_experts: 3
+    lora_r: 8
+    lora_alpha: 16.0
+    lora_dropout: 0.1
+    target_modules:
+      - query
+      - value
+    routing_method: softmax
+
+# ==================== 训练配置 ====================
+training:
+  # 优化器
+  optimizer:
+    name: adamw
+    lr: 2e-5
+    weight_decay: 0.01
+    betas: [0.9, 0.999]
+  
+  # 学习率调度
+  scheduler:
+    name: cosine
+    warmup_ratio: 0.1
+    min_lr_ratio: 0.1
+  
+  # 训练参数
+  batch_size: 16
+  gradient_accumulation_steps: 1
+  num_epochs: 5
+  max_grad_norm: 1.0
+  
+  # 正则化
+  dropout: 0.1
+  label_smoothing: 0.1
+  
+  # 混合精度训练
+  fp16: true
+  
+  # 梯度检查点
+  gradient_checkpointing: false
+
+# ==================== 损失函数配置 ====================
+loss:
+  classification:
+    weight: 1.0
+    class_weights: true
+  
+  # 对比学习 (禁用，因为单模态)
+  contrastive:
+    enabled: false
+  
+  # 专家多样性损失
+  diversity:
+    enabled: true
+    weight: 0.1
+  
+  # 不确定性损失
+  uncertainty:
+    enabled: true
+    weight: 0.2
+
+# ==================== 评估配置 ====================
+evaluation:
+  metrics:
+    - accuracy
+    - precision
+    - recall
+    - f1
+    - auc
+  
+  val_freq: 1
+  save_best: true
+  monitor_metric: f1
+  monitor_mode: max
+
+# ==================== 日志与检查点 ====================
+logging:
+  wandb:
+    enabled: true
+    project: multimodal-fake-news
+    entity: ""
+  
+  tensorboard:
+    enabled: true
+    log_dir: logs/tensorboard
+  
+  checkpoint:
+    save_dir: results/checkpoints
+    save_freq: 1
+    keep_last: 3
+
+# ==================== 硬件配置 ====================
+hardware:
+  device: cuda
+  num_gpus: 1
+  seed: 42
+  num_workers: 4

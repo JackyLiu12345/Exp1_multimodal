@@ -1,0 +1,13 @@
+{
+  "dataset": "FakeNewsNet",
+  "source": "CSV files (text only)",
+  "total_samples": 23196,
+  "label_distribution": {
+    "fake": 5755,
+    "real": 17441
+  },
+  "sources": [
+    "gossipcop",
+    "politifact"
+  ]
+}

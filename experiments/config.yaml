@@ -1,0 +1,182 @@
+# 多模态虚假信息检测实验配置
+
+# ==================== 数据集配置 ====================
+dataset:
+  name: twitter15
+  data_dir: data/processed/twitter15
+  max_text_length: 512
+  image_size: 224
+  
+# ==================== 模型配置 ====================
+model:
+  # 文本编码器
+  text_encoder:
+    name: FacebookAI/roberta-base
+    freeze: false
+    dropout: 0.1
+  
+  # 视觉编码器
+  vision_encoder:
+    name: google/vit-base-patch16-224
+    freeze: false
+    dropout: 0.1
+  
+  # MoE-LoRA 配置
+  moe_lora:
+    num_experts: 3
+    lora_r: 8
+    lora_alpha: 16
+    lora_dropout: 0.1
+    target_modules:
+      - query
+      - value
+    routing_method: softmax  # softmax / top_k / gshard
+  
+  # 跨模态融合
+  fusion:
+    method: cross_attention  # cross_attention / concat / gated
+    hidden_dim: 768
+    num_heads: 12
+    num_layers: 2
+  
+  # 分类头
+  classifier:
+    hidden_dim: 768
+    num_labels: 2
+    dropout: 0.3
+  
+  # 不确定性估计
+  uncertainty:
+    enabled: true
+    method: evidential  # evidential / mc_dropout / ensemble
+
+# ==================== 训练配置 ====================
+training:
+  # 优化器
+  optimizer:
+    name: adamw
+    lr: 2e-5
+    weight_decay: 0.01
+    betas: [0.9, 0.999]
+  
+  # 学习率调度
+  scheduler:
+    name: cosine
+    warmup_ratio: 0.1
+    min_lr_ratio: 0.1
+  
+  # 训练参数
+  batch_size: 8
+  gradient_accumulation_steps: 2  # 有效 batch_size = 8 * 2 = 16
+  num_epochs: 10
+  max_grad_norm: 1.0
+  
+  # 正则化
+  dropout: 0.1
+  label_smoothing: 0.1
+  
+  # 混合精度训练
+  fp16: true
+  fp16_opt_level: O1
+  
+  # 梯度检查点 (节省显存)
+  gradient_checkpointing: true
+
+# ==================== 损失函数配置 ====================
+loss:
+  # 主任务损失
+  classification:
+    weight: 1.0
+    class_weights: true  # 处理类别不平衡
+  
+  # 对比学习损失
+  contrastive:
+    enabled: true
+    weight: 0.5
+    temperature: 0.07
+    margin: 0.5
+  
+  # 专家多样性损失
+  diversity:
+    enabled: true
+    weight: 0.1
+  
+  # 不确定性损失
+  uncertainty:
+    enabled: true
+    weight: 0.2
+
+# ==================== 评估配置 ====================
+evaluation:
+  metrics:
+    - accuracy
+    - precision
+    - recall
+    - f1
+    - auc
+    - confusion_matrix
+  
+  # 验证频率
+  val_freq: 1  # 每个 epoch 验证一次
+  
+  # 保存最佳模型
+  save_best: true
+  monitor_metric: f1
+  monitor_mode: max
+
+# ==================== 日志与检查点 ====================
+logging:
+  # WandB 日志
+  wandb:
+    enabled: true
+    project: multimodal-fake-news
+    entity: ""  # 填写你的 wandb username
+  
+  # TensorBoard
+  tensorboard:
+    enabled: true
+    log_dir: logs/tensorboard
+  
+  # 检查点
+  checkpoint:
+    save_dir: results/checkpoints
+    save_freq: 1  # 每个 epoch 保存一次
+    keep_last: 3  # 保留最近 3 个检查点
+
+# ==================== 硬件配置 ====================
+hardware:
+  device: cuda
+  num_gpus: 1
+  seed: 42
+  num_workers: 4
+
+# ==================== 消融实验配置 ====================
+ablation:
+  # 实验变体
+  variants:
+    - name: full_model
+      description: 完整模型 (MoE-LoRA + 对比学习 + 不确定性)
+      overrides: {}
+    
+    - name: no_moe
+      description: 无 MoE (单 LoRA)
+      overrides:
+        model.moe_lora.num_experts: 1
+    
+    - name: no_contrastive
+      description: 无对比学习
+      overrides:
+        loss.contrastive.enabled: false
+    
+    - name: no_uncertainty
+      description: 无不确定性估计
+      overrides:
+        model.uncertainty.enabled: false
+        loss.uncertainty.enabled: false
+    
+    - name: standard_lora
+      description: 标准 LoRA (无 MoE)
+      overrides:
+        model.moe_lora.num_experts: 1
+        loss.contrastive.enabled: false
+        loss.diversity.enabled: false
