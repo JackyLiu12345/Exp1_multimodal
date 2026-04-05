@@ -16,6 +16,7 @@
 import os
 import sys
 import json
+import math
 import argparse
 import time
 from pathlib import Path
@@ -164,7 +165,6 @@ class Trainer:
         accumulation_steps = self.config.get("training", {}).get("gradient_accumulation_steps", 1)
         warmup_ratio = sched_config.get("warmup_ratio", 0.1)
         # Scheduler steps = optimizer steps (ceil to account for partial final accumulation)
-        import math
         steps_per_epoch = math.ceil(len(self.train_loader) / accumulation_steps)
         total_steps = num_epochs * steps_per_epoch
         warmup_steps = int(total_steps * warmup_ratio)

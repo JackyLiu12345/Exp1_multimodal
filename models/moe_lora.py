@@ -399,7 +399,7 @@ class MoELoRA(nn.Module):
             # Log warning if expert usage is highly imbalanced
             max_usage = usage.max().item()
             min_usage = usage.min().item()
-            if max_usage > 0 and min_usage / max_usage < 0.1:
+            if max_usage > 1e-6 and min_usage / max_usage < 0.1:
                 logger.warning(
                     f"Expert load imbalance detected: "
                     f"usage={[f'{u:.3f}' for u in usage.tolist()]}"
