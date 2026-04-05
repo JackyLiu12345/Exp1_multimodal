@@ -1,6 +1,5 @@
 # Multimodal Fake News Detection with MoE-LoRA
 
-**项目目标**: 发表 SCI 一区论文  
 **核心创新**: 多模态 MoE-LoRA 适配器 + 跨模态对比学习  
 **基座模型**: RoBERTa-base (文本) + ViT (视觉)  
 **硬件**: NVIDIA A40 30GB
